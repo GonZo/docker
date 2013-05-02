@@ -212,7 +212,7 @@ func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, e
 			}
 			return nil, err
 		}
-		line = strings.TrimSpace(line)
+		line = strings.Replace(strings.TrimSpace(line), "	", " ", 1)
 		// Skip comments and empty line
 		if len(line) == 0 || line[0] == '#' {
 			continue
@@ -379,7 +379,7 @@ func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, e
 
 			break
 		default:
-			fmt.Fprintf(stdout, "Skipping unknown instruction %s\n", instruction)
+			fmt.Fprintf(stdout, "Skipping unknown instruction %s\n", strings.ToUpper(instruction))
 		}
 	}
 	if image != nil {
