@@ -165,6 +165,35 @@ func (builder *Builder) clearTmp(containers, images map[string]struct{}) {
 	}
 }
 
+func (builder *Builder) getCachedImage(image *Image, config *Config) (*Image, error) {
+	// Retrieve all images
+	images, err := builder.graph.All()
+	if err != nil {
+		return nil, err
+	}
+
+	// Store the tree in a map of map (map[parentId][childId])
+	imageMap := make(map[string]map[string]struct{})
+	for _, img := range images {
+		if _, exists := imageMap[img.Parent]; !exists {
+			imageMap[img.Parent] = make(map[string]struct{})
+		}
+		imageMap[img.Parent][img.Id] = struct{}{}
+	}
+
+	// Loop on the children of the given image and check the config
+	for elem := range imageMap[image.Id] {
+		img, err := builder.graph.Get(elem)
+		if err != nil {
+			return nil, err
+		}
+		if CompareConfig(&img.ContainerConfig, config) {
+			return img, nil
+		}
+	}
+	return nil, nil
+}
+
 func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, error) {
 	var (
 		image, base   *Image
@@ -233,6 +262,14 @@ func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, e
 			config, err := ParseRun([]string{image.Id, "/bin/sh", "-c", arguments}, nil, builder.runtime.capabilities)
 			if err != nil {
 				return nil, err
+			}
+
+			if cache, err := builder.getCachedImage(image, config); err != nil {
+				return nil, err
+			} else if cache != nil {
+				image = cache
+				fmt.Fprintf(stdout, "===> %s\n", image.ShortId())
+				break
 			}
 
 			// Create the container and start it
@@ -345,7 +382,7 @@ func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, e
 			fmt.Fprintf(stdout, "Skipping unknown instruction %s\n", instruction)
 		}
 	}
-	if base != nil {
+	if image != nil {
 		// The build is successful, keep the temporary containers and images
 		for i := range tmpImages {
 			delete(tmpImages, i)
@@ -353,9 +390,8 @@ func (builder *Builder) Build(dockerfile io.Reader, stdout io.Writer) (*Image, e
 		for i := range tmpContainers {
 			delete(tmpContainers, i)
 		}
-		fmt.Fprintf(stdout, "Build finished. image id: %s\n", base.ShortId())
-	} else {
-		fmt.Fprintf(stdout, "An error occured during the build\n")
+		fmt.Fprintf(stdout, "Build finished. image id: %s\n", image.ShortId())
+		return image, nil
 	}
-	return base, nil
+	return nil, fmt.Errorf("An error occured during the build\n")
 }
